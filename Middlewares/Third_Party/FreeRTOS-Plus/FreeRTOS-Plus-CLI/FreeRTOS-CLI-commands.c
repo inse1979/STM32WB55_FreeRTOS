@@ -235,7 +235,7 @@ static BaseType_t prvDeviceInfoCommand( char *pcWriteBuffer, size_t xWriteBuffer
 											 tskKERNEL_VERSION_BUILD);
 	strncat(pcWriteBuffer,tmp,strlen(tmp));
 
-	sprintf(tmp,"Build ID    : %s\r\n",completeVersion);
+	sprintf(tmp,"OS  Build   : %s\r\n",completeVersion);
 	strncat(pcWriteBuffer,tmp,strlen(tmp));
 
 
@@ -254,12 +254,191 @@ static const CLI_Command_Definition_t xDeviceInfo =
 	0 /* No parameters are expected. */
 };
 /*-----------------------------------------------------------*/
+static BaseType_t prvFlashReadCommand( char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString )
+{
+	const char *pcParameter;
+	BaseType_t xParameterStringLength, xReturn;
+	static UBaseType_t uxParameterNumber = 0;
 
+	/* Remove compile time warnings about unused parameters, and check the
+	write buffer is not NULL.  NOTE - for simplicity, this example assumes the
+	write buffer length is adequate, so does not check for buffer overflows. */
+	( void ) pcCommandString;
+	( void ) xWriteBufferLen;
+	configASSERT( pcWriteBuffer );
+
+	uint32_t flash_address = 0;
+
+	memset( pcWriteBuffer, 0x00, xWriteBufferLen );
+
+	if( uxParameterNumber == 0 )
+	{
+		sprintf( pcWriteBuffer, "Flash Address 0x" );
+		uxParameterNumber = 1U;
+		xReturn = pdPASS;
+	}
+	else
+	{
+		/* Obtain the parameter string. */
+		pcParameter = FreeRTOS_CLIGetParameter
+						(
+							pcCommandString,		/* The command string itself. */
+							uxParameterNumber,		/* Return the next parameter. */
+							&xParameterStringLength	/* Store the parameter string length. */
+						);
+
+		/* Sanity check something was returned. */
+		configASSERT( pcParameter );
+
+		/* Return the parameter string. */
+		memset( pcWriteBuffer, 0x00, xWriteBufferLen );
+
+		flash_address = strtol(pcParameter, NULL, 16);
+
+		sprintf( pcWriteBuffer, "%lX : 0x%llX\r\n",flash_address,(*(__IO uint64_t *) flash_address));
+		/* If this is the last of the three parameters then there are no more
+		strings to return after this one. */
+
+		/* If this is the last of the three parameters then there are no more strings to return after this one. */
+		xReturn = pdFALSE;
+		uxParameterNumber = 0;
+	}
+
+	return xReturn;
+}
+
+static const CLI_Command_Definition_t xFlashRead =
+{
+	"flash-read",
+	"\r\nflash-read:\r\n Read data form Flash\r\n",
+	prvFlashReadCommand,
+	1 /* No parameters are expected. */
+};
+
+/*-----------------------------------------------------------*/
+static uint32_t GetPage(uint32_t Address)
+{
+	uint32_t page = 0U;
+
+	page = (Address - 0x08000000) / FLASH_PAGE_SIZE;
+
+	return page;
+}
+
+static uint32_t EraseFlash(uint32_t PageAddress, uint32_t NumberPage) {
+    FLASH_EraseInitTypeDef eraseinitstruct;
+    uint32_t _pageError;
+
+    eraseinitstruct.TypeErase = FLASH_TYPEERASE_PAGES;
+    eraseinitstruct.Page = GetPage(PageAddress);
+    eraseinitstruct.NbPages = 1U;
+
+    HAL_FLASH_Unlock();
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_OPTVERR);
+    HAL_FLASHEx_Erase(&eraseinitstruct, &_pageError);
+    HAL_FLASH_Lock();
+
+    return _pageError;
+}
+
+static HAL_StatusTypeDef ProgramFlash(uint32_t Address, uint64_t Data) {
+    HAL_StatusTypeDef _status;
+
+    HAL_FLASH_Unlock();
+    _status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, Address, Data);
+    HAL_FLASH_Lock();
+    return _status;
+}
+
+static BaseType_t prvFlashWrite( char *pcWriteBuffer, size_t xWriteBufferLen, const char *pcCommandString )
+{
+	const char *pcParameter;
+	BaseType_t xParameterStringLength, xReturn;
+	static UBaseType_t uxParameterNumber = 0;
+
+	/* Remove compile time warnings about unused parameters, and check the
+	write buffer is not NULL.  NOTE - for simplicity, this example assumes the
+	write buffer length is adequate, so does not check for buffer overflows. */
+	( void ) pcCommandString;
+	( void ) xWriteBufferLen;
+	configASSERT( pcWriteBuffer );
+
+	static uint32_t flash_address = 0;
+	static uint64_t flash_data    = 0;
+
+	memset( pcWriteBuffer, 0x00, xWriteBufferLen );
+
+	if( uxParameterNumber == 0 )
+	{
+		sprintf( pcWriteBuffer, "Write Flash Address 0x" );
+		uxParameterNumber = 1U;
+		xReturn = pdPASS;
+	}
+	else
+	{
+		/* Obtain the parameter string. */
+		pcParameter = FreeRTOS_CLIGetParameter
+						(
+							pcCommandString,		/* The command string itself. */
+							uxParameterNumber,		/* Return the next parameter. */
+							&xParameterStringLength	/* Store the parameter string length. */
+						);
+
+		/* Sanity check something was returned. */
+		configASSERT( pcParameter );
+
+		memset( pcWriteBuffer, 0x00, xWriteBufferLen );
+
+		switch (uxParameterNumber)
+		{
+			case 1:
+				flash_address = strtol(pcParameter, NULL, 16);
+
+				xReturn = pdTRUE;
+				uxParameterNumber++;
+				break;
+
+			case 2:
+				flash_data    = strtoll(pcParameter, NULL, 16);
+
+				sprintf( pcWriteBuffer, "0x%lX : 0x%llX ",flash_address,flash_data);
+
+				if (EraseFlash(flash_address, 1) == 0xFFFFFFFF) {
+				    if (ProgramFlash(flash_address, flash_data) == HAL_OK) {
+				        strncat(pcWriteBuffer,"Okay!\n",strlen("Okay!\n")+1);
+				    } else {
+				        strncat(pcWriteBuffer,"Error!\n",strlen("Error!\n")+1);
+				    }
+				} else {
+				    //printf("Erase error: %x\n", (int)pageError);
+				}
+
+				flash_address = 0;
+				flash_data    = 0;
+				xReturn = pdFALSE;
+				uxParameterNumber = 0;
+				break;
+		}
+	}
+
+	return xReturn;
+}
+
+static const CLI_Command_Definition_t xFlashWrite =
+{
+	"flash-write",
+	"\r\nflash-write:\r\n Write data to Flash\r\n",
+	prvFlashWrite,
+	2 /* No parameters are expected. */
+};
+/*-----------------------------------------------------------*/
 void vRegisterSampleCLICommands( void )
 {
 	/* Register all the command line commands defined immediately above. */
 	FreeRTOS_CLIRegisterCommand( &xDeviceReset );
 	FreeRTOS_CLIRegisterCommand( &xDeviceInfo );
+	FreeRTOS_CLIRegisterCommand( &xFlashRead );
+	FreeRTOS_CLIRegisterCommand( &xFlashWrite );
 	FreeRTOS_CLIRegisterCommand( &xTaskStats );
 
 

@@ -35,6 +35,7 @@ extern "C" {
 #include "usart.h"
 #include "usbd_cdc_if.h"
 #include "iwdg.h"
+#include "stm32wbxx_hal_flash.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
